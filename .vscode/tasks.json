@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+  "label": "Zephyr: build",
+  "type": "shell",
+  "command": "source ~/zephyrproject/.venv/bin/activate && west build -p always -b esp32s3_devkitc/esp32s3/procpu",
+  "group": { "kind": "build", "isDefault": true },
+  "problemMatcher": ["$gcc"]
+},
+{
+  "label": "Zephyr: flash",
+  "type": "shell",
+  "command": "source ~/zephyrproject/.venv/bin/activate && west flash -r esp32 --esp-device /dev/ttyACM0",
+  "problemMatcher": []
+}
+  ]
+}
+
