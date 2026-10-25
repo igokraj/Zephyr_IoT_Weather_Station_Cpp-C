@@ -11,6 +11,7 @@
 
 // User .h files
 #include "formulas.h"
+#include "wifi.h"
 
 #define wakeup_time_sec 20
 
@@ -29,6 +30,7 @@ struct htu21d_data {
 static int gpio_init(void);
 static int htu21d_init(void);
 static int htu21d_read(struct  htu21d_data *data);
+static void Deep_sleep(void);
 
 int main(void)
 {
@@ -40,11 +42,15 @@ int main(void)
 	gpio_pin_set_dt(&led, 1);
 	}
 	else {
-	goto sleep;	
+	Deep_sleep();
 	}
 
 	if (htu21d_init() != 0) {
-	goto sleep;
+	Deep_sleep();
+	}
+
+	if (wifi_connect() != 0) {
+	Deep_sleep();
 	}
 	
 	if (htu21d_read(&data) == 0){
@@ -62,12 +68,8 @@ int main(void)
 	LOG_ERR("Sensor failed...");
 	}
 
-	sleep:
-	LOG_INF("Enabling timer wakeup, %ds", wakeup_time_sec);
-	esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
-	LOG_INF("Powering off");
-	sys_poweroff();
 
+	Deep_sleep();
 	return 0;
 }
 
@@ -112,6 +114,13 @@ static int htu21d_read(struct  htu21d_data *data)
 		return ret;
 	}
 	return 0;
+}
+
+static void Deep_sleep(void) {
+	LOG_INF("Enabling timer wakeup, %ds", wakeup_time_sec);
+	esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+	LOG_INF("Powering off");
+	sys_poweroff();
 }
 
 
