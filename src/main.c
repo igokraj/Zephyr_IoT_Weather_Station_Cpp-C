@@ -4,6 +4,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/sensor.h>
+#include <math.h>
+#include <errno.h>
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -20,12 +22,12 @@ struct htu21d_data {
 static int gpio_init(void);
 static int htu21d_init(void);
 static int htu21d_read(struct  htu21d_data *data);
-
-
+static int dew_point_calculation(double t, double h, double *dew_point);
 
 int main(void)
 {
 	struct htu21d_data data;
+	double dew_point;
 
 	int ret = gpio_init();
 	if (ret < 0) {
@@ -40,12 +42,15 @@ int main(void)
 	while(1) {
 		gpio_pin_toggle_dt(&led);
 		if (htu21d_read(&data) == 0){
-			// Data conversion: val1 + val2 -> float temp/hum
-			float temp = sensor_value_to_float(&data.temperature);
-			float hum = sensor_value_to_float(&data.humidity);
-			// Zephyr will return warning if we try to give float variables to the LOG function
-			LOG_INF("The value of temp is: %.2f, The value of hum is: %.2f", (double)temp, (double)hum);
+			// Data conversion: val1 + val2 -> double temp/hum
+			double temp = sensor_value_to_double(&data.temperature);
+			double hum = sensor_value_to_double(&data.humidity);
+		
+			if (dew_point_calculation(temp, hum, &dew_point) == 0) {
+			LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f", temp, hum, dew_point);
 		}
+	}
+	
 		k_sleep(K_SECONDS(3));
 	}
 
@@ -96,4 +101,20 @@ static int htu21d_read(struct  htu21d_data *data)
 	return 0;
 }
 
+// Obliczanie punktu rosy
+// Magnus-Tetens formula
+static int dew_point_calculation(double t, double h, double  *dew_point) {
+if (h > 100 || h <= 0) {
+LOG_WRN("Data for the dew point calculation is not valid");
+return -EINVAL;
+}
+else {
+const double a = 17.625;
+const double b = 243.04;
 
+double alpha = ((a * t) / (b + t)) + log(h / 100);
+
+*dew_point = ((b * alpha) / (a - alpha));
+return 0;
+}
+}
