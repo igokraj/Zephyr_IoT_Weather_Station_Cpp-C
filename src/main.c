@@ -23,11 +23,14 @@ static int gpio_init(void);
 static int htu21d_init(void);
 static int htu21d_read(struct  htu21d_data *data);
 static int dew_point_calculation(double t, double h, double *dew_point);
+static int cloud_height_calculation(double t, double dew_point, double *cloud_height);
+
 
 int main(void)
 {
 	struct htu21d_data data;
 	double dew_point;
+	double cloud_height;
 
 	int ret = gpio_init();
 	if (ret < 0) {
@@ -47,7 +50,9 @@ int main(void)
 			double hum = sensor_value_to_double(&data.humidity);
 		
 			if (dew_point_calculation(temp, hum, &dew_point) == 0) {
-			LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f", temp, hum, dew_point);
+			cloud_height_calculation(temp, dew_point, &cloud_height);
+			LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
+			temp, hum, dew_point, cloud_height);
 		}
 	}
 	
@@ -118,3 +123,13 @@ double alpha = ((a * t) / (b + t)) + log(h / 100);
 return 0;
 }
 }
+
+static int cloud_height_calculation(double t, double dew_point, double *cloud_height) {
+	if (dew_point > t) {
+		*cloud_height = 0.0;
+		return 0.0;
+	}
+	*cloud_height = (t - dew_point) * 125;
+	return 0;
+}
+
