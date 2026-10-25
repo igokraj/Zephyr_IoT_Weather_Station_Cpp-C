@@ -1,2 +1,10 @@
 /build
 include/secret.h
+Certs
+*-certificate.pem.crt
+*-private.pem.key
+*-public.pem.key
+*.pem
+src/creds/ca.c
+src/creds/key.c
+src/creds/cert.c

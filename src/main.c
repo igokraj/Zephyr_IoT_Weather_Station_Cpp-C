@@ -8,10 +8,12 @@
 #include <errno.h>
 #include <zephyr/sys/poweroff.h>
 #include <esp_sleep.h>
+#include <stdio.h>
 
 // User .h files
 #include "formulas.h"
 #include "wifi.h"
+#include "mqtt.h"
 
 #define wakeup_time_sec 20
 
@@ -62,6 +64,16 @@ int main(void)
 			cloud_height_calculation(temp, dew_point, &cloud_height);
 			LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
 			temp, hum, dew_point, cloud_height);
+
+			char payload[128];
+			snprintf(payload, sizeof(payload),
+			"{\"temperature\":%.2f,\"humidity\":%.2f,"
+				"\"dew_point\":%.2f,\"cloud_height\":%.2f}",
+				temp, hum, dew_point, cloud_height);
+
+			if (aws_mqtt_send(payload) != 0) {
+				LOG_ERR("MQTT message send failed");
+			}
 		}
 	}
 	else {
