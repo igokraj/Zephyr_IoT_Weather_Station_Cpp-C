@@ -8,4 +8,11 @@ project(IoT_WeatherStation)
 
 target_include_directories(app PRIVATE include)
 
-target_sources(app PRIVATE src/main.c src/formulas.c src/wifi.c)
+target_sources(app PRIVATE 
+src/main.c 
+src/formulas.c 
+src/wifi.c
+src/mqtt.c
+src/creds/ca.c
+src/creds/cert.c
+src/creds/key.c)
