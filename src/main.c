@@ -40,12 +40,15 @@ int main(void)
 	while(1) {
 		gpio_pin_toggle_dt(&led);
 		if (htu21d_read(&data) == 0){
-			LOG_INF("Temp is: %d.%02d, Hum is: %d.%02d",
-			data.temperature.val1, abs(data.temperature.val2 / 10000),
-			data.humidity.val1, data.humidity.val2 / 10000);
+			// Data conversion: val1 + val2 -> float temp/hum
+			float temp = sensor_value_to_float(&data.temperature);
+			float hum = sensor_value_to_float(&data.humidity);
+			// Zephyr will return warning if we try to give float variables to the LOG function
+			LOG_INF("The value of temp is: %.2f, The value of hum is: %.2f", (double)temp, (double)hum);
 		}
 		k_sleep(K_SECONDS(3));
 	}
+
 
 	return 0;
 }
