@@ -6,6 +6,12 @@
 #include <zephyr/drivers/sensor.h>
 #include <math.h>
 #include <errno.h>
+#include <zephyr/sys/poweroff.h>
+#include <esp_sleep.h>
+
+
+
+#define wakeup_time_sec 20
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -25,26 +31,24 @@ static int htu21d_read(struct  htu21d_data *data);
 static int dew_point_calculation(double t, double h, double *dew_point);
 static int cloud_height_calculation(double t, double dew_point, double *cloud_height);
 
-
 int main(void)
 {
 	struct htu21d_data data;
 	double dew_point;
 	double cloud_height;
 
-	int ret = gpio_init();
-	if (ret < 0) {
-		return ret;
+	if (gpio_init() == 0) {
+	gpio_pin_set_dt(&led, 1);
+	}
+	else {
+	goto sleep;	
 	}
 
-	ret = htu21d_init();
-	if (ret < 0) {
-		return ret;
+	if (htu21d_init() != 0) {
+	goto sleep;
 	}
 	
-	while(1) {
-		gpio_pin_toggle_dt(&led);
-		if (htu21d_read(&data) == 0){
+	if (htu21d_read(&data) == 0){
 			// Data conversion: val1 + val2 -> double temp/hum
 			double temp = sensor_value_to_double(&data.temperature);
 			double hum = sensor_value_to_double(&data.humidity);
@@ -55,10 +59,15 @@ int main(void)
 			temp, hum, dew_point, cloud_height);
 		}
 	}
-	
-		k_sleep(K_SECONDS(3));
+	else {
+	LOG_ERR("Sensor failed...");
 	}
 
+	sleep:
+	LOG_INF("Enabling timer wakeup, %ds", wakeup_time_sec);
+	esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+	LOG_INF("Powering off");
+	sys_poweroff();
 
 	return 0;
 }
