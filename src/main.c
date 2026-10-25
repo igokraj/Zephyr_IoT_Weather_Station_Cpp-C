@@ -14,14 +14,15 @@
 #include "formulas.h"
 #include "wifi.h"
 #include "mqtt.h"
+#include "init.h"
 
 #define wakeup_time_sec 20
 
-LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
-
-// Devices definition
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
+static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(htu21d));
+
+LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 struct htu21d_data {
 		struct sensor_value temperature;
@@ -29,8 +30,6 @@ struct htu21d_data {
 	};
 
 // Functions definitions
-static int gpio_init(void);
-static int htu21d_init(void);
 static int htu21d_read(struct  htu21d_data *data);
 static void Deep_sleep(void);
 
@@ -49,6 +48,11 @@ int main(void)
 
 	if (htu21d_init() != 0) {
 	Deep_sleep();
+	}
+
+	// Do not disturb the whole process, just return an error
+	if (max17048_init() != 0) {
+	LOG_ERR("Battery level sensor failed...");
 	}
 
 	if (wifi_connect() != 0) {
@@ -79,32 +83,11 @@ int main(void)
 	else {
 	LOG_ERR("Sensor failed...");
 	}
-
-
 	Deep_sleep();
 	return 0;
 }
 
-static int gpio_init(void) {
-if (!gpio_is_ready_dt(&led)) {
-		LOG_ERR("Status LED device is not ready...");
-		return -ENODEV;
-	}
-	int ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
-	if (ret < 0) {
-		LOG_ERR("Status LED config failed (err %d)", ret);
-		return ret;
-	}
-	return 0;
-}
 
-static int htu21d_init(void) {
-if (!device_is_ready(htu)) {
-	LOG_ERR("HTU21D device is not ready");
-	return -ENODEV;
-}
-return 0;
-}
 
 static int htu21d_read(struct  htu21d_data *data)
 {

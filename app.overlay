@@ -22,6 +22,15 @@
 			output-high;
 		};
 	};
+	i2c1_default: i2c1_default {
+		group1 {
+			pinmux = <I2C1_SDA_GPIO4>,
+				 <I2C1_SCL_GPIO5>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
 };
 
 &i2c0 {
@@ -30,6 +39,16 @@
 	htu21d: htu21d@40 {
 		compatible = "meas,htu21d";
 		reg = <0x40>;
+		status = "okay";
+	};
+};
+
+&i2c1 {
+	status = "okay";
+
+	max17048: max17048@36 {
+		compatible = "maxim,max17048";
+		reg = <0x36>;
 		status = "okay";
 	};
 };
