@@ -1,13 +1,35 @@
 / {
-    aliases {
-        status-led = &status_led;
-    };
+	aliases {
+		status-led = &status_led;
+	};
 
-    leds {
-        compatible = "gpio-leds";
-        status_led: status_led {
-            gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
-            label = "Status LED";
-        };
-    };
+	leds {
+		compatible = "gpio-leds";
+		status_led: status_led {
+			gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+			label = "Status LED";
+		};
+	};
+};
+
+&pinctrl {
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO1>,
+				 <I2C0_SCL_GPIO2>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+
+	htu21d: htu21d@40 {
+		compatible = "meas,htu21d";
+		reg = <0x40>;
+		status = "okay";
+	};
 };
