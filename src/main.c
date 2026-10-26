@@ -24,12 +24,11 @@
 #include "mqtt.h"
 #include "init.h"
 
-// **** Additional options in the code **** 
+// **** Additional options in the code ****
 
 // 1) Status diode -> enable LED_DIODE in CMakeLists.txt
 // 2) Read the battery only every BATTERY_READ_EVERY-th wake-up -> enable both
 //    WAKE_COUNT and BATTERY_READ_EVERY in CMakeLists.txt
-
 
 #if defined(WAKE_COUNT) && !defined(BATTERY_READ_EVERY)
 #error "WAKE_COUNT needs BATTERY_READ_EVERY to be defined"
@@ -45,13 +44,14 @@ static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
-struct htu21d_data {
-		struct sensor_value temperature;
-		struct sensor_value humidity;
-	};
+struct htu21d_data
+{
+	struct sensor_value temperature;
+	struct sensor_value humidity;
+};
 
 // Functions definitions
-static int htu21d_read(struct  htu21d_data *data);
+static int htu21d_read(struct htu21d_data *data);
 static void Deep_sleep(void);
 
 #ifdef WAKE_COUNT
@@ -71,109 +71,130 @@ int main(void)
 	double cloud_height;
 	union fuel_gauge_prop_val val;
 
-	#ifdef LED_DIODE
-	if (gpio_init() == 0) {
-	gpio_pin_set_dt(&led, 1);
+#ifdef LED_DIODE
+	if (gpio_init() == 0)
+	{
+		gpio_pin_set_dt(&led, 1);
 	}
-	else {
-	Deep_sleep();
+	else
+	{
+		Deep_sleep();
 	}
-	#endif
+#endif
 
-	if (htu21d_init() != 0) {
-	Deep_sleep();
+	if (htu21d_init() != 0)
+	{
+		Deep_sleep();
 	}
 
 	// Do not disturb the whole process, just return an error
-	if (max17048_init() != 0) {
-	LOG_ERR("Battery level sensor failed...");
+	if (max17048_init() != 0)
+	{
+		LOG_ERR("Battery level sensor failed...");
 	}
 
-	#ifdef	WAKE_COUNT
+#ifdef WAKE_COUNT
 	wake_count++;
 	// Read the % of the battery once every BATTERY_READ_EVERYth wake up times
-	if ((wake_count - 1) % BATTERY_READ_EVERY == 0) {
-	#endif
-	if (fuel_gauge_get_prop(max, FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE_PCT, &val) == 0) {
-	ptc = val.relative_state_of_charge_pct;
-	LOG_INF("Battery percent is: [%d%%]", ptc);
+	if ((wake_count - 1) % BATTERY_READ_EVERY == 0)
+	{
+#endif
+		if (fuel_gauge_get_prop(max, FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE_PCT, &val) == 0)
+		{
+			ptc = val.relative_state_of_charge_pct;
+			LOG_INF("Battery percent is: [%d%%]", ptc);
+		}
+		else
+		{
+			ptc = -1;
+			LOG_ERR("Battery read failed...");
+		}
+
+#ifdef WAKE_COUNT
 	}
-	else {
-	ptc = -1;
-	LOG_ERR("Battery read failed...");
+#endif
+
+	// Buffers for the MQTT messages
+	char payload[128];
+	char payload2[64];
+
+	/* There is no point in connecting to Wi-Fi if the sensor is not working,
+	   just go to sleep */
+	if (htu21d_read(&data) != 0)
+	{
+		LOG_ERR("Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
+		Deep_sleep();
 	}
 
-	#ifdef WAKE_COUNT
-	}
-	#endif
+	// Data conversion: val1 + val2 -> double temp/hum
+	double temp = sensor_value_to_double(&data.temperature);
+	double hum = sensor_value_to_double(&data.humidity);
 
-	if (wifi_connect() != 0) {
-	Deep_sleep();
-	}
-
-	if (htu21d_read(&data) == 0){
-			// Data conversion: val1 + val2 -> double temp/hum
-			double temp = sensor_value_to_double(&data.temperature);
-			double hum = sensor_value_to_double(&data.humidity);
-		
-			if (dew_point_calculation(temp, hum, &dew_point) == 0) {
-			cloud_height_calculation(temp, dew_point, &cloud_height);
-			LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
-			temp, hum, dew_point, cloud_height);
-
-			char payload[128];
-			snprintf(payload, sizeof(payload),
-			"{\"temperature\":%.2f,\"humidity\":%.2f,"
-				"\"dew_point\":%.2f,\"cloud_height\":%.2f}",
+	if (dew_point_calculation(temp, hum, &dew_point) == 0)
+	{
+		cloud_height_calculation(temp, dew_point, &cloud_height);
+		LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
 				temp, hum, dew_point, cloud_height);
 
-			char payload2[64];
-			snprintf(payload2, sizeof(payload2),
-			"{\"battery percent\":%d}", ptc);
+		snprintf(payload, sizeof(payload),
+				 "{\"temperature\":%.2f,\"humidity\":%.2f,"
+				 "\"dew_point\":%.2f,\"cloud_height\":%.2f}",
+				 temp, hum, dew_point, cloud_height);
+	}
+	else
+	{
+		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
 
-			if (aws_mqtt_send(payload, payload2) != 0) {
-				LOG_ERR("MQTT message send failed");
-			}
-		}
+		snprintf(payload, sizeof(payload),
+				 "{\"temperature\":%.2f,\"humidity\":%.2f}", temp, hum);
 	}
-	else {
-	LOG_ERR("Sensor failed...");
+
+	snprintf(payload2, sizeof(payload2),
+			 "{\"battery percent\":%d}", ptc);
+
+	if (wifi_connect() != 0)
+	{
+		Deep_sleep();
 	}
-	
+
+	if (aws_mqtt_send(payload, payload2) != 0)
+	{
+		LOG_ERR("MQTT message send failed");
+	}
+
 	Deep_sleep();
 	return 0;
 }
 
-
-
-static int htu21d_read(struct  htu21d_data *data)
+static int htu21d_read(struct htu21d_data *data)
 {
 	int ret = sensor_sample_fetch(htu);
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		LOG_ERR("HTU21D fetch failed (err %d)", ret);
 		return ret;
 	}
 
 	ret = sensor_channel_get(htu, SENSOR_CHAN_AMBIENT_TEMP, &data->temperature);
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		LOG_WRN("Temperature measurement failed...");
 		return ret;
 	}
 
 	ret = sensor_channel_get(htu, SENSOR_CHAN_HUMIDITY, &data->humidity);
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		LOG_WRN("Humidity measurement failed...");
 		return ret;
 	}
 	return 0;
 }
 
-static void Deep_sleep(void) {
+static void Deep_sleep(void)
+{
 	LOG_INF("Enabling timer wakeup, %ds", wakeup_time_sec);
 	esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
 	LOG_INF("Powering off");
 	sys_poweroff();
 }
-
-
-
