@@ -102,10 +102,14 @@ int main(void)
 			char payload[128];
 			snprintf(payload, sizeof(payload),
 			"{\"temperature\":%.2f,\"humidity\":%.2f,"
-				"\"dew_point\":%.2f,\"cloud_height\":%.2f, \"battery percent\":%d}",
-				temp, hum, dew_point, cloud_height, ptc);
+				"\"dew_point\":%.2f,\"cloud_height\":%.2f}",
+				temp, hum, dew_point, cloud_height);
 
-			if (aws_mqtt_send(payload) != 0) {
+			char payload2[64];
+			snprintf(payload2, sizeof(payload2),
+			"{\"battery percent\":%d}", ptc);
+
+			if (aws_mqtt_send(payload, payload2) != 0) {
 				LOG_ERR("MQTT message send failed");
 			}
 		}

@@ -200,16 +200,48 @@ static int wait_for(bool *flag, int timeout_ms)
 	return 0;
 }
 
+
+/* Publish one message with QoS 1 and wait until AWS confirms it with PUBACK */
+static int publish_and_wait(const char *topic, const char *payload, uint16_t id)
+{
+	struct mqtt_publish_param msg = {
+		.message.topic.topic.utf8 = (const uint8_t *)topic,
+		.message.topic.topic.size = strlen(topic),
+		.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE, /* CHANGE: QoS 0 if delivery confirmation is not needed */
+		.message.payload.data = (uint8_t *)payload,
+		.message.payload.len = strlen(payload),
+		.message_id = id,
+	};
+
+	/* Clear the flag so we wait for the PUBACK of this message, not an older one */
+	puback_received = false;
+
+	int ret = mqtt_publish(&client_ctx, &msg);
+	if (ret != 0) {
+		LOG_ERR("mqtt_publish failed (err %d)", ret);
+		return ret;
+	}
+	LOG_INF("Published to %s: %s", topic, payload);
+
+	/* CHANGE: remove this wait when using QoS 0, AWS sends no PUBACK then */
+	ret = wait_for(&puback_received, MQTT_TIMEOUT_MS);
+	if (ret != 0) {
+		LOG_ERR("No PUBACK (err %d)", ret);
+	}
+	return ret;
+}
+
 /*
- Connect to AWS, publish one message and disconnect.
- Returns 0 only when AWS confirmed delivery with PUBACK.
+ Connect to AWS, publish the messages and disconnect.
+ payload goes to AWS_PUBLISH_TOPIC_1, payload2 to AWS_PUBLISH_TOPIC_2
+ (pass NULL as payload2 to skip it).
+ Returns 0 only when AWS confirmed every message with PUBACK.
 */
-int aws_mqtt_send(const char *payload)
+int aws_mqtt_send(const char *payload, const char *payload2)
 {
 	int ret;
 
 	connack_received = false;
-	puback_received = false;
 
 	ret = setup_credentials();
 	if (ret != 0) {
@@ -238,27 +270,14 @@ int aws_mqtt_send(const char *payload)
 
 	/* CHANGE: subscribe to a topic here if the station should get commands from AWS */
 
-	/* QoS 1 means AWS has to answer with PUBACK */
-	struct mqtt_publish_param msg = {
-		.message.topic.topic.utf8 = (const uint8_t *)AWS_PUBLISH_TOPIC, /* CHANGE: other topic for other data */
-		.message.topic.topic.size = strlen(AWS_PUBLISH_TOPIC),
-		.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE, /* CHANGE: QoS 0 if delivery confirmation is not needed */
-		.message.payload.data = (uint8_t *)payload,
-		.message.payload.len = strlen(payload),
-		.message_id = 1, /* CHANGE: give each message its own id when sending more than one */
-	};
-
-	ret = mqtt_publish(&client_ctx, &msg);
+	/* CHANGE: add another publish_and_wait() with the next id for another topic */
+	ret = publish_and_wait(AWS_PUBLISH_TOPIC_1, payload, 1);
 	if (ret != 0) {
-		LOG_ERR("mqtt_publish failed (err %d)", ret);
 		goto disconnect;
 	}
-	LOG_INF("Published to %s: %s", AWS_PUBLISH_TOPIC, payload);
 
-	/* CHANGE: remove this wait when using QoS 0, AWS sends no PUBACK then */
-	ret = wait_for(&puback_received, MQTT_TIMEOUT_MS);
-	if (ret != 0) {
-		LOG_ERR("No PUBACK (err %d)", ret);
+	if (payload2 != NULL) {
+		ret = publish_and_wait(AWS_PUBLISH_TOPIC_2, payload2, 2);
 	}
 
 disconnect:
