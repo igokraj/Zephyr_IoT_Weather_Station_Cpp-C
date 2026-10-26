@@ -3,12 +3,20 @@
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
+
+// HTU21D
 #include <zephyr/drivers/sensor.h>
+// MAX17048
+#include <zephyr/drivers/fuel_gauge.h>
+
 #include <math.h>
 #include <errno.h>
 #include <zephyr/sys/poweroff.h>
 #include <esp_sleep.h>
 #include <stdio.h>
+
+// RTC memory
+#include <esp_attr.h>
 
 // User .h files
 #include "formulas.h"
@@ -20,7 +28,7 @@
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
-static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(htu21d));
+static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -33,11 +41,20 @@ struct htu21d_data {
 static int htu21d_read(struct  htu21d_data *data);
 static void Deep_sleep(void);
 
+static RTC_DATA_ATTR uint32_t wake_count;
+/*
+ Keeping ptc in RTC memory means it survives deep sleep, so MQTT can send
+ the last battery % reading on wake-ups where the battery is not read
+ (there are 9 of them in every cycle if we read the % every 10 wake-ups) */
+static RTC_DATA_ATTR int ptc = -1;
+
 int main(void)
 {
 	struct htu21d_data data;
 	double dew_point;
 	double cloud_height;
+	union fuel_gauge_prop_val val;
+
 
 	if (gpio_init() == 0) {
 	gpio_pin_set_dt(&led, 1);
@@ -55,10 +72,23 @@ int main(void)
 	LOG_ERR("Battery level sensor failed...");
 	}
 
+	wake_count++;
+	// Read the % of the battery once every 10 wake up times
+	if (wake_count % 10 == 1) {
+	if (fuel_gauge_get_prop(max, FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE_PCT, &val) == 0) {
+	ptc = val.relative_state_of_charge_pct;
+	LOG_INF("Battery percent is: [%d%%]", ptc);
+	}
+	else {
+	ptc = -1;
+	LOG_ERR("Battery read failed...");
+	}
+	}
+
 	if (wifi_connect() != 0) {
 	Deep_sleep();
 	}
-	
+
 	if (htu21d_read(&data) == 0){
 			// Data conversion: val1 + val2 -> double temp/hum
 			double temp = sensor_value_to_double(&data.temperature);
@@ -72,8 +102,8 @@ int main(void)
 			char payload[128];
 			snprintf(payload, sizeof(payload),
 			"{\"temperature\":%.2f,\"humidity\":%.2f,"
-				"\"dew_point\":%.2f,\"cloud_height\":%.2f}",
-				temp, hum, dew_point, cloud_height);
+				"\"dew_point\":%.2f,\"cloud_height\":%.2f, \"battery percent\":%d}",
+				temp, hum, dew_point, cloud_height, ptc);
 
 			if (aws_mqtt_send(payload) != 0) {
 				LOG_ERR("MQTT message send failed");
@@ -83,6 +113,7 @@ int main(void)
 	else {
 	LOG_ERR("Sensor failed...");
 	}
+	
 	Deep_sleep();
 	return 0;
 }
