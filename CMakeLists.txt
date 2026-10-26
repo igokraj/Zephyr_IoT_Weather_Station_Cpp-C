@@ -17,3 +17,10 @@ src/init.c
 src/creds/ca.c
 src/creds/cert.c
 src/creds/key.c)
+
+# Optional features:
+target_compile_definitions(app PRIVATE
+	# LED_DIODE               # status LED on during the active phase
+	# WAKE_COUNT              # read the battery only every BATTERY_READ_EVERY-th wake-up
+	# BATTERY_READ_EVERY=10   # needed together with WAKE_COUNT
+)

@@ -14,10 +14,13 @@
 LOG_MODULE_REGISTER(init, LOG_LEVEL_DBG);
 
 // Devices definition
+#ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
+#endif
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
+#ifdef LED_DIODE
 int gpio_init(void) {
 if (!gpio_is_ready_dt(&led)) {
 		LOG_ERR("Status LED device is not ready...");
@@ -30,6 +33,7 @@ if (!gpio_is_ready_dt(&led)) {
 	}
 	return 0;
 }
+#endif
 
 int htu21d_init(void) {
 if (!device_is_ready(htu)) {

@@ -26,19 +26,20 @@
 
 // **** Additional options in the code **** 
 
-/* 1) Enable if you want to read the battery every BATTERY_READ_EVERYth time
+// 1) Status diode -> enable LED_DIODE in CMakeLists.txt
+// 2) Read the battery only every BATTERY_READ_EVERY-th wake-up -> enable both
+//    WAKE_COUNT and BATTERY_READ_EVERY in CMakeLists.txt
 
-#define BATTERY_READ_EVERY 10
-#define WAKE_COUNT 
 
 #if defined(WAKE_COUNT) && !defined(BATTERY_READ_EVERY)
 #error "WAKE_COUNT needs BATTERY_READ_EVERY to be defined"
 #endif
-*/
 
 #define wakeup_time_sec 600
 
+#ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
+#endif
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
@@ -70,13 +71,14 @@ int main(void)
 	double cloud_height;
 	union fuel_gauge_prop_val val;
 
-
+	#ifdef LED_DIODE
 	if (gpio_init() == 0) {
 	gpio_pin_set_dt(&led, 1);
 	}
 	else {
 	Deep_sleep();
 	}
+	#endif
 
 	if (htu21d_init() != 0) {
 	Deep_sleep();
