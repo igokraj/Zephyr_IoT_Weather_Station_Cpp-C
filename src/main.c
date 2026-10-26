@@ -24,7 +24,19 @@
 #include "mqtt.h"
 #include "init.h"
 
-#define wakeup_time_sec 20
+// **** Additional options in the code **** 
+
+/* 1) Enable if you want to read the battery every BATTERY_READ_EVERYth time
+
+#define BATTERY_READ_EVERY 10
+#define WAKE_COUNT 
+
+#if defined(WAKE_COUNT) && !defined(BATTERY_READ_EVERY)
+#error "WAKE_COUNT needs BATTERY_READ_EVERY to be defined"
+#endif
+*/
+
+#define wakeup_time_sec 600
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
@@ -41,11 +53,14 @@ struct htu21d_data {
 static int htu21d_read(struct  htu21d_data *data);
 static void Deep_sleep(void);
 
+#ifdef WAKE_COUNT
 static RTC_DATA_ATTR uint32_t wake_count;
+#endif
 /*
  Keeping ptc in RTC memory means it survives deep sleep, so MQTT can send
  the last battery % reading on wake-ups where the battery is not read
- (there are 9 of them in every cycle if we read the % every 10 wake-ups) */
+ (only used when WAKE_COUNT is defined, otherwise it is read every wake-up)
+*/
 static RTC_DATA_ATTR int ptc = -1;
 
 int main(void)
@@ -72,9 +87,11 @@ int main(void)
 	LOG_ERR("Battery level sensor failed...");
 	}
 
+	#ifdef	WAKE_COUNT
 	wake_count++;
-	// Read the % of the battery once every 10 wake up times
-	if (wake_count % 10 == 1) {
+	// Read the % of the battery once every BATTERY_READ_EVERYth wake up times
+	if ((wake_count - 1) % BATTERY_READ_EVERY == 0) {
+	#endif
 	if (fuel_gauge_get_prop(max, FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE_PCT, &val) == 0) {
 	ptc = val.relative_state_of_charge_pct;
 	LOG_INF("Battery percent is: [%d%%]", ptc);
@@ -83,7 +100,10 @@ int main(void)
 	ptc = -1;
 	LOG_ERR("Battery read failed...");
 	}
+
+	#ifdef WAKE_COUNT
 	}
+	#endif
 
 	if (wifi_connect() != 0) {
 	Deep_sleep();
