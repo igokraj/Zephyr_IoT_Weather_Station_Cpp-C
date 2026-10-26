@@ -9,7 +9,6 @@
 // MAX17048
 #include <zephyr/drivers/fuel_gauge.h>
 
-#include <math.h>
 #include <errno.h>
 #include <zephyr/sys/poweroff.h>
 #include <esp_sleep.h>
