@@ -14,6 +14,7 @@ src/formulas.c
 src/wifi.c
 src/mqtt.c
 src/init.c
+src/watchdog.c
 src/creds/ca.c
 src/creds/cert.c
 src/creds/key.c)

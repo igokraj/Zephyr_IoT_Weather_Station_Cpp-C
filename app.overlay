@@ -52,3 +52,7 @@
 		status = "okay";
 	};
 };
+
+&wdt0 {
+    status = "okay";
+};

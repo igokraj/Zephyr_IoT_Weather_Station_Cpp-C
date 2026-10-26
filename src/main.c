@@ -22,6 +22,7 @@
 #include "wifi.h"
 #include "mqtt.h"
 #include "init.h"
+#include "watchdog.h"
 
 // **** Additional options in the code ****
 
@@ -69,6 +70,11 @@ int main(void)
 	double dew_point;
 	double cloud_height;
 	union fuel_gauge_prop_val val;
+
+	if (watchdog_init() != 0)
+	{
+		Deep_sleep();
+	}
 
 #ifdef LED_DIODE
 	if (gpio_init() == 0)
