@@ -4,7 +4,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
 
-// HTU21D
+// Json Parsing
+#include <zephyr/data/json.h>
+#include <string.h>
+
+// HTU21D BMP280
 #include <zephyr/drivers/sensor.h>
 // MAX17048
 #include <zephyr/drivers/fuel_gauge.h>
@@ -34,8 +38,6 @@
 #error "WAKE_COUNT needs BATTERY_READ_EVERY to be defined"
 #endif
 
-#define wakeup_time_sec 60
-
 #ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
@@ -54,7 +56,6 @@ struct htu21d_data
 struct bmp280_data
 {
 	struct sensor_value pressure;
-	struct sensor_value temerature;
 };
 
 // Functions definitions
@@ -71,6 +72,18 @@ static RTC_DATA_ATTR uint32_t wake_count;
  (only used when WAKE_COUNT is defined, otherwise it is read every wake-up)
 */
 static RTC_DATA_ATTR int ptc = -1;
+
+/* Wake up time kept in RTC memory, so a new interval from AWS survives deep sleep */
+static RTC_DATA_ATTR uint32_t wakeup_time_sec = 60;
+
+struct wake_time 
+{
+	int32_t interval;
+};
+
+static const struct json_obj_descr command_descr[] = {
+	JSON_OBJ_DESCR_PRIM(struct wake_time, interval, JSON_TOK_NUMBER),
+};
 
 int main(void)
 {
@@ -158,11 +171,11 @@ int main(void)
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Preassure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
+		LOG_INF("Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
 				press, temp, hum, dew_point, cloud_height);
 
 		snprintf(payload, sizeof(payload),
-				 "{\"preassure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
+				 "{\"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
 				 "\"dew_point\":%.2f,\"cloud_height\":%.2f}",
 				 press, temp, hum, dew_point, cloud_height);
 	}
@@ -171,7 +184,7 @@ int main(void)
 		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"preassure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
+				 "{\"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
 				  press, temp, hum);
 	}
 
@@ -186,6 +199,28 @@ int main(void)
 	if (aws_mqtt_send(payload, payload2) != 0)
 	{
 		LOG_ERR("MQTT message send failed");
+	}
+
+	// Receive a message from AWS
+	char *message = aws_mqtt_get_message();
+
+	// Accept the message only if these conditions are true
+	if (message != NULL)
+	{
+		struct wake_time time;
+		int64_t ret = json_obj_parse(message, strlen(message),
+					     command_descr, ARRAY_SIZE(command_descr), &time);
+
+		// The possible duration of deep sleep ranges from min. 1 minute to max. 60 minutes
+		if (ret > 0 && (ret & BIT(0)) && time.interval >= 60 && time.interval <= 3600)
+		{
+			wakeup_time_sec = time.interval;
+			LOG_INF("New wake up time is %u [s]", wakeup_time_sec);
+		}
+		else
+		{
+			LOG_ERR("Invalid command from AWS...");
+		}
 	}
 
 	Deep_sleep();
@@ -237,8 +272,8 @@ static int bmp280_read(struct bmp280_data *data)
 
 static void Deep_sleep(void)
 {
-	LOG_INF("Enabling timer wakeup, %ds", wakeup_time_sec);
-	esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+	LOG_INF("Enabling timer wakeup, %us", wakeup_time_sec);
+	esp_sleep_enable_timer_wakeup((uint64_t)wakeup_time_sec * 1000000);
 	LOG_INF("Powering off");
 	sys_poweroff();
 }

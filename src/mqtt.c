@@ -25,6 +25,7 @@ LOG_MODULE_REGISTER(mqtt, LOG_LEVEL_DBG);
 /* AWS IoT Core settings */
 #define AWS_PORT          8883  /* CHANGE: 443 if the network blocks 8883 (needs ALPN, see AWS sample) */
 #define MQTT_BUFFER_SIZE 256u  /* CHANGE: increase if topic + payload get bigger than ~200 B */
+#define APP_BUFFER_SIZE  256u  /* CHANGE: increase for longer messages from AWS */
 #define MQTT_TIMEOUT_MS  10000 /* CHANGE: longer for weak Wi-Fi, shorter to save battery */
 
 #define TLS_TAG_DEVICE 1
@@ -44,10 +45,12 @@ static const sec_tag_t sec_tls_tags[] = {
 /* *** CONSTANT *** */
 static uint8_t rx_buffer[MQTT_BUFFER_SIZE];
 static uint8_t tx_buffer[MQTT_BUFFER_SIZE];
+static uint8_t buffer[APP_BUFFER_SIZE];
 static struct mqtt_client client_ctx;
 static struct net_sockaddr_storage aws_broker;
 static bool connack_received;
 static bool puback_received;
+static bool message_received;
 
 
 /*
@@ -108,6 +111,81 @@ static int resolve_broker_addr(void)
 }
 
 /*
+ Read a message from AWS into buffer and confirm it with PUBACK (QoS 1).
+ A message bigger than buffer is read to the end, but discarded.
+*/
+/* *** CONSTANT *** */
+static ssize_t handle_published_message(const struct mqtt_publish_param *pub)
+{
+	int ret;
+	size_t received = 0u;
+	const size_t message_size = pub->message.payload.len;
+	const bool discarded = message_size >= APP_BUFFER_SIZE;
+
+	/* The topic has no '\0' at the end, so %.*s prints exactly size characters */
+	LOG_INF("RECEIVED on topic \"%.*s\" [ id: %u qos: %u ] payload: %u / %u B",
+		pub->message.topic.topic.size, (const char *)pub->message.topic.topic.utf8,
+		pub->message_id, pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
+
+	while (received < message_size) {
+		uint8_t *p = discarded ? buffer : &buffer[received];
+
+		ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
+		if (ret < 0) {
+			return ret;
+		}
+
+		received += ret;
+	}
+
+	if (!discarded) {
+		buffer[message_size] = '\0';
+	}
+
+	/* Send ACK */
+	switch (pub->message.topic.qos) {
+	case MQTT_QOS_1_AT_LEAST_ONCE: {
+		struct mqtt_puback_param puback;
+
+		puback.message_id = pub->message_id;
+		mqtt_publish_qos1_ack(&client_ctx, &puback);
+	} break;
+	case MQTT_QOS_2_EXACTLY_ONCE: /* unhandled (not supported by AWS) */
+	case MQTT_QOS_0_AT_MOST_ONCE: /* nothing to do */
+	default:
+		break;
+	}
+
+	return discarded ? -ENOMEM : received;
+}
+
+/* Ask AWS to forward messages from AWS_SUBSCRIBE_TOPIC to this device */
+/* *** CONSTANT *** */
+static int subscribe_topic(void)
+{
+	int ret;
+	struct mqtt_topic topics[] = {{
+		.topic = {.utf8 = (const uint8_t*)AWS_SUBSCRIBE_TOPIC,
+			  .size = strlen(AWS_SUBSCRIBE_TOPIC)},
+		.qos = MQTT_QOS_1_AT_LEAST_ONCE,
+	}};
+	const struct mqtt_subscription_list sub_list = {
+		.list = topics,
+		.list_count = ARRAY_SIZE(topics),
+		.message_id = 3u,
+	};
+
+	LOG_INF("Subscribing to %hu topic(s)", sub_list.list_count);
+
+	ret = mqtt_subscribe(&client_ctx, &sub_list);
+	if (ret != 0) {
+		LOG_ERR("Failed to subscribe to topics: %d", ret);
+	}
+
+	return ret;
+}
+
+/*
  Called by mqtt_input() whenever a packet from AWS arrives.
  It only sets flags, wait_for() checks them.
 */
@@ -124,6 +202,15 @@ static void mqtt_event_cb(struct mqtt_client *client, const struct mqtt_evt *evt
 			LOG_ERR("MQTT connection refused (%d)", evt->result);
 		}
 		break;
+	
+	case MQTT_EVT_PUBLISH: {
+		const struct mqtt_publish_param *pub = &evt->param.publish;
+
+		if (handle_published_message(pub) >= 0) {
+		message_received = true;
+		}
+	} break;	
+
 	/* AWS got our QoS 1 message */
 	case MQTT_EVT_PUBACK:
 		LOG_INF("Message delivered (id %u)", evt->param.puback.message_id);
@@ -132,7 +219,11 @@ static void mqtt_event_cb(struct mqtt_client *client, const struct mqtt_evt *evt
 	case MQTT_EVT_DISCONNECT:
 		LOG_INF("MQTT disconnected");
 		break;
-	/* CHANGE: add MQTT_EVT_SUBACK and MQTT_EVT_PUBLISH here to receive messages from AWS */
+	case MQTT_EVT_SUBACK:
+		LOG_INF("SUBACK result: %d, code: 0x%02x", evt->result,
+			evt->param.suback.return_codes.data[0]);
+		break;
+
 	default:
 		break;
 	}
@@ -242,6 +333,7 @@ int aws_mqtt_send(const char *payload, const char *payload2)
 	int ret;
 
 	connack_received = false;
+	message_received = false;
 
 	ret = setup_credentials();
 	if (ret != 0) {
@@ -268,7 +360,8 @@ int aws_mqtt_send(const char *payload, const char *payload2)
 		goto disconnect;
 	}
 
-	/* CHANGE: subscribe to a topic here if the station should get commands from AWS */
+	/* A failed subscribe should not stop the measurements from being sent */
+	subscribe_topic();
 
 	/* CHANGE: add another publish_and_wait() with the next id for another topic */
 	ret = publish_and_wait(AWS_PUBLISH_TOPIC_1, payload, 1);
@@ -280,7 +373,20 @@ int aws_mqtt_send(const char *payload, const char *payload2)
 		ret = publish_and_wait(AWS_PUBLISH_TOPIC_2, payload2, 2);
 	}
 
+	// Give aws a moment to deliver a message
+	if (ret == 0) {
+		wait_for(&message_received, 4000);
+	}
+
 disconnect:
 	mqtt_disconnect(&client_ctx, NULL);
 	return ret;
+}
+
+
+/*
+Returns the message from AWS as a text
+*/
+char *aws_mqtt_get_message(void) {
+	return message_received ? (char *)buffer : NULL;
 }

@@ -9,7 +9,7 @@ static int wdt_channel;
 
 static struct wdt_timeout_cfg wdt_cfg = {
     .window.min = 0,
-    .window.max = 15000, // 15000 -> 30 s 
+    .window.max = 30000, // 30000 -> 30 s 
     .callback = NULL,
     .flags = WDT_FLAG_RESET_SOC
 };
