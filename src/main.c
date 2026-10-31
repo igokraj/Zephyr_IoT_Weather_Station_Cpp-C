@@ -41,6 +41,7 @@
 #ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
+static const struct gpio_dt_spec rain = GPIO_DT_SPEC_GET(DT_ALIAS(rain_status), gpios);
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
@@ -117,6 +118,11 @@ int main(void)
 	}
 #endif
 
+	if (rain_init() != 0)
+	{
+		Deep_sleep();
+	}
+	
 	if (htu21d_init() != 0)
 	{
 		Deep_sleep();
@@ -186,25 +192,26 @@ int main(void)
 	double hum = sensor_value_to_double(&data_htu.humidity);
 	double press = sensor_value_to_double(&data_bmp.pressure) * 10.0; // kPa -> hPa
 	double lux = sensor_value_to_double(&data_bh.lux);
+	bool rain_state = (gpio_pin_get_dt(&rain) == 0);
 
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
-				press, temp, hum, dew_point, cloud_height);
+		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f, Rain: %d",
+				lux, press, temp, hum, dew_point, cloud_height, rain_state);
 
 		snprintf(payload, sizeof(payload),
 				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
-				 "\"dew_point\":%.2f,\"cloud_height\":%.2f}",
-				 lux, press, temp, hum, dew_point, cloud_height);
+				 "\"dew_point\":%.2f,\"cloud_height\":%.2f, \"Rain\":%d}",
+				 lux, press, temp, hum, dew_point, cloud_height, rain_state);
 	}
 	else
 	{
 		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
-				  lux, press, temp, hum);
+				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,\"Rain\":%d}",
+				  lux, press, temp, hum, rain_state);
 	}
 
 	snprintf(payload2, sizeof(payload2),

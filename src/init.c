@@ -17,6 +17,7 @@ LOG_MODULE_REGISTER(init, LOG_LEVEL_DBG);
 #ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
+static const struct gpio_dt_spec rain = GPIO_DT_SPEC_GET(DT_ALIAS(rain_status), gpios);
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
@@ -36,6 +37,19 @@ if (!gpio_is_ready_dt(&led)) {
 	return 0;
 }
 #endif
+
+int rain_init(void) {
+if (!gpio_is_ready_dt(&rain)) {
+		LOG_ERR("Rain device is not ready...");
+		return -ENODEV;
+	}
+	int ret = gpio_pin_configure_dt(&rain, GPIO_INPUT);
+	if (ret < 0) {
+		LOG_ERR("Rain device config failed (err %d)", ret);
+		return ret;
+	}
+	return 0;
+}
 
 int htu21d_init(void) {
 if (!device_is_ready(htu)) {

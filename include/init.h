@@ -5,3 +5,4 @@ int htu21d_init(void);
 int bmp280_init(void);
 int max17048_init(void);
 int bh1750_init(void);
+int rain_init(void);
