@@ -34,12 +34,13 @@
 #error "WAKE_COUNT needs BATTERY_READ_EVERY to be defined"
 #endif
 
-#define wakeup_time_sec 600
+#define wakeup_time_sec 60
 
 #ifdef LED_DIODE
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
+static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
@@ -50,8 +51,15 @@ struct htu21d_data
 	struct sensor_value humidity;
 };
 
+struct bmp280_data
+{
+	struct sensor_value pressure;
+	struct sensor_value temerature;
+};
+
 // Functions definitions
 static int htu21d_read(struct htu21d_data *data);
+static int bmp280_read(struct bmp280_data *data);
 static void Deep_sleep(void);
 
 #ifdef WAKE_COUNT
@@ -66,7 +74,8 @@ static RTC_DATA_ATTR int ptc = -1;
 
 int main(void)
 {
-	struct htu21d_data data;
+	struct htu21d_data data_htu;
+	struct bmp280_data data_bmp;
 	double dew_point;
 	double cloud_height;
 	union fuel_gauge_prop_val val;
@@ -88,6 +97,11 @@ int main(void)
 #endif
 
 	if (htu21d_init() != 0)
+	{
+		Deep_sleep();
+	}
+
+	if (bmp280_init() != 0)
 	{
 		Deep_sleep();
 	}
@@ -120,38 +134,45 @@ int main(void)
 #endif
 
 	// Buffers for the MQTT messages
-	char payload[128];
+	char payload[156];
 	char payload2[64];
 
 	/* There is no point in connecting to Wi-Fi if the sensor is not working,
 	   just go to sleep */
-	if (htu21d_read(&data) != 0)
+	if (htu21d_read(&data_htu) != 0)
 	{
-		LOG_ERR("Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
+		LOG_ERR("HTU Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
+		Deep_sleep();
+	}
+
+	if (bmp280_read(&data_bmp) != 0) {
+		LOG_ERR("BMP Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
 		Deep_sleep();
 	}
 
 	// Data conversion: val1 + val2 -> double temp/hum
-	double temp = sensor_value_to_double(&data.temperature);
-	double hum = sensor_value_to_double(&data.humidity);
+	double temp = sensor_value_to_double(&data_htu.temperature);
+	double hum = sensor_value_to_double(&data_htu.humidity);
+	double press = sensor_value_to_double(&data_bmp.pressure) * 10.0; // kPa -> hPa
 
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
-				temp, hum, dew_point, cloud_height);
+		LOG_INF("Preassure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
+				press, temp, hum, dew_point, cloud_height);
 
 		snprintf(payload, sizeof(payload),
-				 "{\"temperature\":%.2f,\"humidity\":%.2f,"
+				 "{\"preassure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
 				 "\"dew_point\":%.2f,\"cloud_height\":%.2f}",
-				 temp, hum, dew_point, cloud_height);
+				 press, temp, hum, dew_point, cloud_height);
 	}
 	else
 	{
 		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"temperature\":%.2f,\"humidity\":%.2f}", temp, hum);
+				 "{\"preassure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
+				  press, temp, hum);
 	}
 
 	snprintf(payload2, sizeof(payload2),
@@ -191,6 +212,24 @@ static int htu21d_read(struct htu21d_data *data)
 	if (ret < 0)
 	{
 		LOG_WRN("Humidity measurement failed...");
+		return ret;
+	}
+	return 0;
+}
+
+static int bmp280_read(struct bmp280_data *data)
+{
+	int ret = sensor_sample_fetch(bmp);
+	if (ret < 0)
+	{
+		LOG_ERR("BMP280 fetch failed (err %d)", ret);
+		return ret;
+	}
+
+	ret = sensor_channel_get(bmp, SENSOR_CHAN_PRESS, &data->pressure);
+	if (ret < 0)
+	{
+		LOG_WRN("Atmospheric pressure measurement failed...");
 		return ret;
 	}
 	return 0;

@@ -19,6 +19,7 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gp
 #endif
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
+static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 
 #ifdef LED_DIODE
 int gpio_init(void) {
@@ -38,6 +39,14 @@ if (!gpio_is_ready_dt(&led)) {
 int htu21d_init(void) {
 if (!device_is_ready(htu)) {
 	LOG_ERR("HTU21D device is not ready");
+	return -ENODEV;
+}
+return 0;
+}
+
+int bmp280_init(void) {
+if (!device_is_ready(bmp)) {
+	LOG_ERR("BMP280 device is not ready");
 	return -ENODEV;
 }
 return 0;
