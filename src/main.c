@@ -44,6 +44,7 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gp
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
+static const struct device *bh = DEVICE_DT_GET(DT_NODELABEL(bh1750));
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -58,9 +59,15 @@ struct bmp280_data
 	struct sensor_value pressure;
 };
 
+struct bh1750_data
+{
+	struct sensor_value lux; 
+};
+
 // Functions definitions
 static int htu21d_read(struct htu21d_data *data);
 static int bmp280_read(struct bmp280_data *data);
+static int bh1750_read(struct bh1750_data *data);
 static void Deep_sleep(void);
 
 #ifdef WAKE_COUNT
@@ -89,6 +96,7 @@ int main(void)
 {
 	struct htu21d_data data_htu;
 	struct bmp280_data data_bmp;
+	struct bh1750_data data_bh;
 	double dew_point;
 	double cloud_height;
 	union fuel_gauge_prop_val val;
@@ -115,6 +123,11 @@ int main(void)
 	}
 
 	if (bmp280_init() != 0)
+	{
+		Deep_sleep();
+	}
+
+	if (bh1750_init() != 0)
 	{
 		Deep_sleep();
 	}
@@ -163,29 +176,35 @@ int main(void)
 		Deep_sleep();
 	}
 
+	if (bh1750_read(&data_bh) != 0) {
+		LOG_ERR("BH Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
+		Deep_sleep();
+	}
+
 	// Data conversion: val1 + val2 -> double temp/hum
 	double temp = sensor_value_to_double(&data_htu.temperature);
 	double hum = sensor_value_to_double(&data_htu.humidity);
 	double press = sensor_value_to_double(&data_bmp.pressure) * 10.0; // kPa -> hPa
+	double lux = sensor_value_to_double(&data_bh.lux);
 
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
+		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f",
 				press, temp, hum, dew_point, cloud_height);
 
 		snprintf(payload, sizeof(payload),
-				 "{\"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
+				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
 				 "\"dew_point\":%.2f,\"cloud_height\":%.2f}",
-				 press, temp, hum, dew_point, cloud_height);
+				 lux, press, temp, hum, dew_point, cloud_height);
 	}
 	else
 	{
 		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
-				  press, temp, hum);
+				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f}",
+				  lux, press, temp, hum);
 	}
 
 	snprintf(payload2, sizeof(payload2),
@@ -204,7 +223,7 @@ int main(void)
 	// Receive a message from AWS
 	char *message = aws_mqtt_get_message();
 
-	// Accept the message only if these conditions are true
+	// Accept the message only if these conditions below are true
 	if (message != NULL)
 	{
 		struct wake_time time;
@@ -265,6 +284,24 @@ static int bmp280_read(struct bmp280_data *data)
 	if (ret < 0)
 	{
 		LOG_WRN("Atmospheric pressure measurement failed...");
+		return ret;
+	}
+	return 0;
+}
+
+static int bh1750_read(struct bh1750_data *data)
+{
+	int ret = sensor_sample_fetch(bh);
+	if (ret < 0)
+	{
+		LOG_ERR("BH1750 fetch failed (err %d)", ret);
+		return ret;
+	}
+
+	ret = sensor_channel_get(bh, SENSOR_CHAN_LIGHT, &data->lux);
+	if (ret < 0)
+	{
+		LOG_WRN("light intensity measurement failed...");
 		return ret;
 	}
 	return 0;

@@ -20,6 +20,7 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gp
 static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
+static const struct device *bh = DEVICE_DT_GET(DT_NODELABEL(bh1750));
 
 #ifdef LED_DIODE
 int gpio_init(void) {
@@ -55,6 +56,14 @@ return 0;
 int max17048_init(void) {
 if (!device_is_ready(max)) {
 	LOG_ERR("MAX17048 device is not ready");
+	return -ENODEV;
+}
+return 0;
+}
+
+int bh1750_init(void) {
+if (!device_is_ready(bh)) {
+	LOG_ERR("BH1750 device is not ready");
 	return -ENODEV;
 }
 return 0;
