@@ -1,5 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
@@ -47,6 +48,9 @@ static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 static const struct device *bh = DEVICE_DT_GET(DT_NODELABEL(bh1750));
 
+/* Data of ADC io-channels specified in devicetree. */
+static const struct adc_dt_spec rain_adc = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
+
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 struct htu21d_data
@@ -70,6 +74,7 @@ static int htu21d_read(struct htu21d_data *data);
 static int bmp280_read(struct bmp280_data *data);
 static int bh1750_read(struct bh1750_data *data);
 static void Deep_sleep(void);
+static int rain_adc_read(void);
 
 #ifdef WAKE_COUNT
 static RTC_DATA_ATTR uint32_t wake_count;
@@ -93,6 +98,7 @@ static const struct json_obj_descr command_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct wake_time, interval, JSON_TOK_NUMBER),
 };
 
+
 int main(void)
 {
 	struct htu21d_data data_htu;
@@ -101,6 +107,8 @@ int main(void)
 	double dew_point;
 	double cloud_height;
 	union fuel_gauge_prop_val val;
+
+	
 
 	if (watchdog_init() != 0)
 	{
@@ -120,6 +128,10 @@ int main(void)
 
 	if (rain_init() != 0)
 	{
+		Deep_sleep();
+	}
+
+	if (adc_init() != 0) {
 		Deep_sleep();
 	}
 	
@@ -192,26 +204,32 @@ int main(void)
 	double hum = sensor_value_to_double(&data_htu.humidity);
 	double press = sensor_value_to_double(&data_bmp.pressure) * 10.0; // kPa -> hPa
 	double lux = sensor_value_to_double(&data_bh.lux);
-	bool rain_state = (gpio_pin_get_dt(&rain) == 0);
+	bool rain_state = (gpio_pin_get_dt(&rain));
+	int rain_mv = rain_adc_read();
+
+	if (rain_mv < 0) {
+		LOG_ERR("Rain ADC failed -> skipping Wi-Fi and MQTT, going to sleep...");
+		Deep_sleep();
+	}
 
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f, Rain: %d",
-				lux, press, temp, hum, dew_point, cloud_height, rain_state);
+		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f, Rain: %d, Rain_ADC: %d",
+				lux, press, temp, hum, dew_point, cloud_height, rain_state, rain_mv);
 
 		snprintf(payload, sizeof(payload),
 				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
-				 "\"dew_point\":%.2f,\"cloud_height\":%.2f, \"Rain\":%d}",
-				 lux, press, temp, hum, dew_point, cloud_height, rain_state);
+				 "\"dew_point\":%.2f,\"cloud_height\":%.2f, \"Rain\":%d, \"Rain_ADC\":%d}",
+				 lux, press, temp, hum, dew_point, cloud_height, rain_state, rain_mv);
 	}
 	else
 	{
-		LOG_ERR("Dew point calculation failed, sending temp and hum only...");
+		LOG_ERR("Dew point calculation failed, sending other parameters...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,\"Rain\":%d}",
-				  lux, press, temp, hum, rain_state);
+				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,\"Rain\":%d, \"Rain_ADC\":%d}",
+				  lux, press, temp, hum, rain_state, rain_mv);
 	}
 
 	snprintf(payload2, sizeof(payload2),
@@ -320,4 +338,31 @@ static void Deep_sleep(void)
 	esp_sleep_enable_timer_wakeup((uint64_t)wakeup_time_sec * 1000000);
 	LOG_INF("Powering off");
 	sys_poweroff();
+}
+
+
+static int rain_adc_read(void)
+{
+
+	uint32_t buf = 0;
+	struct adc_sequence sequence = {
+		.buffer = &buf,
+		.buffer_size = sizeof(buf),
+	};
+
+	adc_sequence_init_dt(&rain_adc, &sequence);
+
+	int ret = adc_read_dt(&rain_adc, &sequence);
+			if (ret < 0) {
+				LOG_ERR("Could not read rain ADC (%d)", ret);
+				return ret;
+			}
+
+	int32_t val_mv = buf;
+
+	ret = adc_raw_to_millivolts_dt(&rain_adc, &val_mv);
+	if (ret < 0) {
+		return ret;
+	} 
+	return val_mv;
 }

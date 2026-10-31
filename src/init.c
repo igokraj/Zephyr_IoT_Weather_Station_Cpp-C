@@ -6,6 +6,9 @@
 #include <zephyr/drivers/sensor.h>
 #include <errno.h>
 #include <stdio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/drivers/adc.h>
+
 
 // User .h files
 #include "init.h"
@@ -22,6 +25,10 @@ static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *bh = DEVICE_DT_GET(DT_NODELABEL(bh1750));
+
+/* Data of ADC io-channels specified in devicetree. */
+static const struct adc_dt_spec rain_adc = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
+
 
 #ifdef LED_DIODE
 int gpio_init(void) {
@@ -81,4 +88,17 @@ if (!device_is_ready(bh)) {
 	return -ENODEV;
 }
 return 0;
+}
+
+int adc_init(void) {
+if (!adc_is_ready_dt(&rain_adc)) {
+	LOG_ERR("Rain sensor adc is not ready");
+	return -ENODEV;
+}
+	int ret = adc_channel_setup_dt(&rain_adc);
+	if (ret < 0) {
+		LOG_ERR("Rain adc config failed (err %d)", ret);
+		return ret;
+	}
+	return 0;
 }
