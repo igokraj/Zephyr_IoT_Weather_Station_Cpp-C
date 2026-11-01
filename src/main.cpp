@@ -3,13 +3,12 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/i2c.h>
 
 // Json Parsing
 #include <zephyr/data/json.h>
 #include <string.h>
 
-// HTU21D BMP280
+// HTU21D BMP280 BH1750
 #include <zephyr/drivers/sensor.h>
 // MAX17048
 #include <zephyr/drivers/fuel_gauge.h>
@@ -43,36 +42,14 @@
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
 static const struct gpio_dt_spec rain = GPIO_DT_SPEC_GET(DT_ALIAS(rain_status), gpios);
-static const struct device *htu = DEVICE_DT_GET(DT_NODELABEL(htu21d));
-static const struct device *bmp = DEVICE_DT_GET(DT_NODELABEL(bmp280));
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
-static const struct device *bh = DEVICE_DT_GET(DT_NODELABEL(bh1750));
 
 /* Data of ADC io-channels specified in devicetree. */
 static const struct adc_dt_spec rain_adc = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
-struct htu21d_data
-{
-	struct sensor_value temperature;
-	struct sensor_value humidity;
-};
-
-struct bmp280_data
-{
-	struct sensor_value pressure;
-};
-
-struct bh1750_data
-{
-	struct sensor_value lux; 
-};
-
 // Functions definitions
-static int htu21d_read(struct htu21d_data *data);
-static int bmp280_read(struct bmp280_data *data);
-static int bh1750_read(struct bh1750_data *data);
 static void Deep_sleep(void);
 static int rain_adc_read(void);
 
@@ -89,7 +66,7 @@ static RTC_DATA_ATTR int ptc = -1;
 /* Wake up time kept in RTC memory, so a new interval from AWS survives deep sleep */
 static RTC_DATA_ATTR uint32_t wakeup_time_sec = 60;
 
-struct wake_time 
+struct wake_time
 {
 	int32_t interval;
 };
@@ -98,17 +75,49 @@ static const struct json_obj_descr command_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct wake_time, interval, JSON_TOK_NUMBER),
 };
 
+class Sensor
+{
+
+public:
+	explicit Sensor(const struct device *dev) : dev_(dev) {}
+
+	bool ready() const
+	{
+		return device_is_ready(dev_);
+	}
+
+	int fetch() const
+	{
+		return sensor_sample_fetch(dev_);
+	}
+
+	int get(enum sensor_channel chan, double &out) const
+	{
+		struct sensor_value val;
+
+		int ret = sensor_channel_get(dev_, chan, &val);
+		if (ret == 0)
+		{
+			out = sensor_value_to_double(&val);
+		}
+		return ret;
+	}
+
+private:
+	const struct device *dev_;
+};
 
 int main(void)
 {
-	struct htu21d_data data_htu;
-	struct bmp280_data data_bmp;
-	struct bh1750_data data_bh;
+
+	Sensor htu(DEVICE_DT_GET(DT_NODELABEL(htu21d)));
+	Sensor bmp(DEVICE_DT_GET(DT_NODELABEL(bmp280)));
+	Sensor bh(DEVICE_DT_GET(DT_NODELABEL(bh1750)));
+
+	double temp, hum, press, lux;
 	double dew_point;
 	double cloud_height;
 	union fuel_gauge_prop_val val;
-
-	
 
 	if (watchdog_init() != 0)
 	{
@@ -131,24 +140,30 @@ int main(void)
 		Deep_sleep();
 	}
 
-	if (adc_init() != 0) {
-		Deep_sleep();
-	}
-	
-	if (htu21d_init() != 0)
+	if (adc_init() != 0)
 	{
 		Deep_sleep();
 	}
 
-	if (bmp280_init() != 0)
+	// Check the devices (htu, bmp, bh)
+	if (!htu.ready() || !bmp.ready() || !bh.ready())
 	{
 		Deep_sleep();
 	}
 
-	if (bh1750_init() != 0)
+	// Get the measurements from 3 sensors (htu, bmp, bh)
+	if (htu.fetch() != 0 ||
+		htu.get(SENSOR_CHAN_AMBIENT_TEMP, temp) != 0 ||
+		htu.get(SENSOR_CHAN_HUMIDITY, hum) != 0 ||
+		bmp.fetch() != 0 ||
+		bmp.get(SENSOR_CHAN_PRESS, press) != 0 ||
+		bh.fetch() != 0 ||
+		bh.get(SENSOR_CHAN_LIGHT, lux) != 0)
 	{
+		LOG_ERR("Sensor read failed -> skipping Wi-Fi and MQTT, going to sleep...");
 		Deep_sleep();
 	}
+	press *= 10.0; // kPa -> hPa
 
 	// Do not disturb the whole process, just return an error
 	if (max17048_init() != 0)
@@ -181,33 +196,11 @@ int main(void)
 	char payload[156];
 	char payload2[64];
 
-	/* There is no point in connecting to Wi-Fi if the sensor is not working,
-	   just go to sleep */
-	if (htu21d_read(&data_htu) != 0)
-	{
-		LOG_ERR("HTU Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
-		Deep_sleep();
-	}
-
-	if (bmp280_read(&data_bmp) != 0) {
-		LOG_ERR("BMP Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
-		Deep_sleep();
-	}
-
-	if (bh1750_read(&data_bh) != 0) {
-		LOG_ERR("BH Sensor failed -> skipping Wi-Fi and MQTT, going to sleep...");
-		Deep_sleep();
-	}
-
-	// Data conversion: val1 + val2 -> double temp/hum
-	double temp = sensor_value_to_double(&data_htu.temperature);
-	double hum = sensor_value_to_double(&data_htu.humidity);
-	double press = sensor_value_to_double(&data_bmp.pressure) * 10.0; // kPa -> hPa
-	double lux = sensor_value_to_double(&data_bh.lux);
 	bool rain_state = (gpio_pin_get_dt(&rain));
 	int rain_mv = rain_adc_read();
 
-	if (rain_mv < 0) {
+	if (rain_mv < 0)
+	{
 		LOG_ERR("Rain ADC failed -> skipping Wi-Fi and MQTT, going to sleep...");
 		Deep_sleep();
 	}
@@ -229,7 +222,7 @@ int main(void)
 
 		snprintf(payload, sizeof(payload),
 				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,\"Rain\":%d, \"Rain_ADC\":%d}",
-				  lux, press, temp, hum, rain_state, rain_mv);
+				 lux, press, temp, hum, rain_state, rain_mv);
 	}
 
 	snprintf(payload2, sizeof(payload2),
@@ -253,7 +246,7 @@ int main(void)
 	{
 		struct wake_time time;
 		int64_t ret = json_obj_parse(message, strlen(message),
-					     command_descr, ARRAY_SIZE(command_descr), &time);
+									 command_descr, ARRAY_SIZE(command_descr), &time);
 
 		// The possible duration of deep sleep ranges from min. 1 minute to max. 60 minutes
 		if (ret > 0 && (ret & BIT(0)) && time.interval >= 60 && time.interval <= 3600)
@@ -271,67 +264,6 @@ int main(void)
 	return 0;
 }
 
-static int htu21d_read(struct htu21d_data *data)
-{
-	int ret = sensor_sample_fetch(htu);
-	if (ret < 0)
-	{
-		LOG_ERR("HTU21D fetch failed (err %d)", ret);
-		return ret;
-	}
-
-	ret = sensor_channel_get(htu, SENSOR_CHAN_AMBIENT_TEMP, &data->temperature);
-	if (ret < 0)
-	{
-		LOG_WRN("Temperature measurement failed...");
-		return ret;
-	}
-
-	ret = sensor_channel_get(htu, SENSOR_CHAN_HUMIDITY, &data->humidity);
-	if (ret < 0)
-	{
-		LOG_WRN("Humidity measurement failed...");
-		return ret;
-	}
-	return 0;
-}
-
-static int bmp280_read(struct bmp280_data *data)
-{
-	int ret = sensor_sample_fetch(bmp);
-	if (ret < 0)
-	{
-		LOG_ERR("BMP280 fetch failed (err %d)", ret);
-		return ret;
-	}
-
-	ret = sensor_channel_get(bmp, SENSOR_CHAN_PRESS, &data->pressure);
-	if (ret < 0)
-	{
-		LOG_WRN("Atmospheric pressure measurement failed...");
-		return ret;
-	}
-	return 0;
-}
-
-static int bh1750_read(struct bh1750_data *data)
-{
-	int ret = sensor_sample_fetch(bh);
-	if (ret < 0)
-	{
-		LOG_ERR("BH1750 fetch failed (err %d)", ret);
-		return ret;
-	}
-
-	ret = sensor_channel_get(bh, SENSOR_CHAN_LIGHT, &data->lux);
-	if (ret < 0)
-	{
-		LOG_WRN("light intensity measurement failed...");
-		return ret;
-	}
-	return 0;
-}
-
 static void Deep_sleep(void)
 {
 	LOG_INF("Enabling timer wakeup, %us", wakeup_time_sec);
@@ -339,7 +271,6 @@ static void Deep_sleep(void)
 	LOG_INF("Powering off");
 	sys_poweroff();
 }
-
 
 static int rain_adc_read(void)
 {
@@ -353,16 +284,18 @@ static int rain_adc_read(void)
 	adc_sequence_init_dt(&rain_adc, &sequence);
 
 	int ret = adc_read_dt(&rain_adc, &sequence);
-			if (ret < 0) {
-				LOG_ERR("Could not read rain ADC (%d)", ret);
-				return ret;
-			}
+	if (ret < 0)
+	{
+		LOG_ERR("Could not read rain ADC (%d)", ret);
+		return ret;
+	}
 
 	int32_t val_mv = buf;
 
 	ret = adc_raw_to_millivolts_dt(&rain_adc, &val_mv);
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		return ret;
-	} 
+	}
 	return val_mv;
 }
