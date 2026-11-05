@@ -5,6 +5,7 @@
 	aliases {
 		status-led = &status_led;
 		rain-status = &rain_status;
+		rain-vcc = &rain_vcc_pin;
 	};
 
 	leds {
@@ -12,6 +13,10 @@
 		status_led: status_led {
 			gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
 			label = "Status LED";
+		};
+		rain_vcc_pin: rain_vcc_pin {
+			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+			label = "Rain vcc";
 		};
 	};
 

@@ -17,6 +17,7 @@ LOG_MODULE_REGISTER(init, LOG_LEVEL_DBG);
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
 static const struct gpio_dt_spec rain = GPIO_DT_SPEC_GET(DT_ALIAS(rain_status), gpios);
+static const struct gpio_dt_spec rain_vcc = GPIO_DT_SPEC_GET(DT_ALIAS(rain_vcc), gpios);
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
 /* Data of ADC io-channels specified in devicetree. */
@@ -42,7 +43,7 @@ int gpio_init(void)
 
 int rain_init(void)
 {
-	if (!gpio_is_ready_dt(&rain))
+	if (!gpio_is_ready_dt(&rain) || !gpio_is_ready_dt(&rain_vcc))
 	{
 		LOG_ERR("Rain device is not ready...");
 		return -ENODEV;
@@ -51,6 +52,12 @@ int rain_init(void)
 	if (ret < 0)
 	{
 		LOG_ERR("Rain device config failed (err %d)", ret);
+		return ret;
+	}
+	ret = gpio_pin_configure_dt(&rain_vcc, GPIO_OUTPUT);
+	if (ret < 0)
+	{
+		LOG_ERR("Rain vcc pin config failed (err %d)", ret);
 		return ret;
 	}
 	return 0;

@@ -42,6 +42,7 @@
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
 #endif
 static const struct gpio_dt_spec rain = GPIO_DT_SPEC_GET(DT_ALIAS(rain_status), gpios);
+static const struct gpio_dt_spec rain_vcc = GPIO_DT_SPEC_GET(DT_ALIAS(rain_vcc), gpios);
 static const struct device *max = DEVICE_DT_GET(DT_NODELABEL(max17048));
 
 /* Data of ADC io-channels specified in devicetree. */
@@ -139,6 +140,10 @@ int main(void)
 	{
 		Deep_sleep();
 	}
+	else {
+		// Enable the VCC pin for the Rain sensor
+		gpio_pin_set_dt(&rain_vcc, 1);
+	}
 
 	if (adc_init() != 0)
 	{
@@ -208,12 +213,12 @@ int main(void)
 	if (dew_point_calculation(temp, hum, &dew_point) == 0)
 	{
 		cloud_height_calculation(temp, dew_point, &cloud_height);
-		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud height: %.2f, Rain: %d, Rain_ADC: %d",
+		LOG_INF("Lux: %.2f, Pressure: %.2f, Temperature: %.2f, Humidity: %.2f, Dew point: %.2f, Cloud_height: %.2f, Rain: %d, Rain_ADC: %d",
 				lux, press, temp, hum, dew_point, cloud_height, rain_state, rain_mv);
 
 		snprintf(payload, sizeof(payload),
-				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,"
-				 "\"dew_point\":%.2f,\"cloud_height\":%.2f, \"Rain\":%d, \"Rain_ADC\":%d}",
+				 "{\"Lux\":%.2f, \"Pressure\":%.2f, \"Temperature\":%.2f,\"Humidity\":%.2f,"
+				 "\"Dew_point\":%.2f,\"Cloud_height\":%.2f, \"Rain\":%d, \"Rain_ADC\":%d}",
 				 lux, press, temp, hum, dew_point, cloud_height, rain_state, rain_mv);
 	}
 	else
@@ -221,12 +226,12 @@ int main(void)
 		LOG_ERR("Dew point calculation failed, sending other parameters...");
 
 		snprintf(payload, sizeof(payload),
-				 "{\"lux\":%.2f, \"pressure\":%.2f, \"temperature\":%.2f,\"humidity\":%.2f,\"Rain\":%d, \"Rain_ADC\":%d}",
+				 "{\"lux\":%.2f, \"Pressure\":%.2f, \"Temperature\":%.2f,\"Humidity\":%.2f,\"Rain\":%d, \"Rain_ADC\":%d}",
 				 lux, press, temp, hum, rain_state, rain_mv);
 	}
 
 	snprintf(payload2, sizeof(payload2),
-			 "{\"battery percent\":%d}", ptc);
+			 "{\"battery_percent\":%d}", ptc);
 
 	if (wifi_connect() != 0)
 	{
@@ -259,6 +264,9 @@ int main(void)
 			LOG_ERR("Invalid command from AWS...");
 		}
 	}
+
+	// Disable the VCC pin for the rain sensor before going to sleep
+	gpio_pin_set_dt(&rain_vcc, 0);
 
 	Deep_sleep();
 	return 0;
